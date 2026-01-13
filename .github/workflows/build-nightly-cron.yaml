@@ -23,7 +23,6 @@ jobs:
       SPT_VERSION: ${{ steps.versions.outputs.SPT_VERSION }}
       SPT_COMMIT_ID: ${{ steps.versions.outputs.SPT_COMMIT_ID }}
       BUILD_DATE_TIME: ${{ steps.versions.outputs.DATE_TIME }}
-      # 坚持使用 Release，为了去水印
       BUILD_CONFIG: Release
       BUILD_TYPE: Release
 
@@ -114,31 +113,25 @@ jobs:
         shell: bash
 
       # ----------------------------------------------------------------
-      # !!! 终极修复方案 (Directory.Build.targets) !!!
-      # 1. 删掉原有的配置文件 (Prevent Inheritance)
-      # 2. 创建 .targets 文件 (Late Binding Override)
-      #    这会在所有 .csproj 加载完之后再加载，强制覆盖配置
+      # !!! 真正的终极解决方案 !!!
+      # 创建 Directory.Build.targets 文件
+      # 这个文件会在所有 csproj 加载后加载，强制覆盖所有设置
       # ----------------------------------------------------------------
-      - name: Enforce Lax Build Settings (Overwrite Everything)
+      - name: Force Override Build Settings (Directory.Build.targets)
         run: |
           cd /snapshot
-          echo "🧹 Cleaning existing config files..."
-          rm -f Directory.Build.props
-          rm -f Directory.Build.targets
-          
-          echo "🛡️ Injecting God-Mode targets file..."
-          # 创建 Directory.Build.targets，这是最后加载的配置文件
-          # 强制关闭警告报错，强制关闭空指针检查
-          echo '<Project>
+          # 写入覆盖配置：关闭警告报错，关闭空指针检查，屏蔽常见警告
+          cat <<EOF > Directory.Build.targets
+          <Project>
             <PropertyGroup>
-               <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-               <WarningsAsErrors>false</WarningsAsErrors>
-               <Nullable>disable</Nullable>
-               <NoWarn>$(NoWarn);CS8600;CS8601;CS8602;CS8603;CS8604;CS8618;CS8619;CS8625;CS8629;CS8714;IL3000;IL3002</NoWarn>
+              <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+              <WarningsAsErrors></WarningsAsErrors>
+              <Nullable>disable</Nullable>
+              <NoWarn>\$(NoWarn);CS8600;CS8601;CS8602;CS8603;CS8604;CS8618;CS8619;CS8625;CS8629;CS8714;IL3000</NoWarn>
             </PropertyGroup>
-          </Project>' > Directory.Build.targets
-          
-          echo "✅ Config injection complete."
+          </Project>
+          EOF
+          echo "✅ Directory.Build.targets created. Strict mode has been nuked from orbit."
         shell: bash
 
       - name: Publish Windows Server
@@ -205,6 +198,6 @@ jobs:
           prerelease: true
           body: |
             ## 纯净版构建
-            去除水印，强制忽略编译警告。
+            强制去除水印，屏蔽所有编译警告。
           files: |
             ${{ needs.build-server-host.outputs.WIN_RELEASE_FILE }}
