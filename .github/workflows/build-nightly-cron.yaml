@@ -1,9 +1,7 @@
 name: SPT-Server No-Watermark Build
 
 on:
-  # 加入手动触发按钮
   workflow_dispatch:
-  # 保留定时任务，每天自动跑一次（如果你不需要自动跑，可以把 schedule 这三行删掉）
   schedule:
     - cron: '30 2 * * *'
   push:
@@ -25,9 +23,11 @@ jobs:
       SPT_VERSION: ${{ steps.versions.outputs.SPT_VERSION }}
       SPT_COMMIT_ID: ${{ steps.versions.outputs.SPT_COMMIT_ID }}
       BUILD_DATE_TIME: ${{ steps.versions.outputs.DATE_TIME }}
-      # !!! 关键修改：这里强制改为 Release，彻底去水印 !!!
-      BUILD_TYPE: Release 
-      BUILD_CONFIG: Release
+      # !!! 核心修改 !!!
+      # Config 使用原本的 Nightly 配置，保证编译一定能通过
+      BUILD_CONFIG: BLEEDINGEDGEMODS
+      # Type 强制设为 Release，骗过水印逻辑
+      BUILD_TYPE: Release
 
     steps:
       - name: Checkout
@@ -42,15 +42,13 @@ jobs:
           echo "SPT_COMMIT_ID=$SPT_COMMIT_ID" >> $GITHUB_OUTPUT
         shell: bash
       
-      - name: Compare Hashes (Force Proceed for Manual)
+      - name: Compare Hashes
         id: compare-hash
         run: |
-          # 简化逻辑：如果是手动触发(workflow_dispatch)，或者原本的逻辑判断需要更新，都继续编译
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
              echo "✅ Manual trigger detected. Forcing build."
              echo "PROCEED=true" >> $GITHUB_OUTPUT
           else
-             # 这里保留原本的检测逻辑，防止自动任务重复编译
              git pull
              if [ -f "trigger.nightly" ]; then
                source trigger.nightly
@@ -58,14 +56,10 @@ jobs:
              else
                server_last_built_hash="none"
              fi
-             
              server_latest_commit_hash=${{ steps.get-latest-commit.outputs.SPT_COMMIT_ID }}
-             
              if [ "$server_last_built_hash" != "$server_latest_commit_hash" ]; then
-               echo "✅ New commit detected. Proceeding."
                echo "PROCEED=true" >> $GITHUB_OUTPUT
              else
-               echo "🛑 No updates found."
                echo "PROCEED=false" >> $GITHUB_OUTPUT
              fi
              echo "BUILT_HASH=$server_last_built_hash" >> $GITHUB_OUTPUT
@@ -77,14 +71,10 @@ jobs:
         if: steps.compare-hash.outputs.PROCEED == 'true'
         run: |
           SPT_COMMIT_ID=${{ steps.get-latest-commit.outputs.SPT_COMMIT_ID }}
-
           latest_tag=$(git ls-remote --tags ${{ env.SERVER_URL }}/${{ env.REPOSITORY_SPT_SERVER }}.git | awk -F'/' '{print $NF}' | grep -v '\^{}' | sort -V | tail -1)
           SPT_VERSION=$(echo $latest_tag | cut -d'-' -f1)
-
-          # Extract versions from core.json
           wget https://raw.githubusercontent.com/${{ env.REPOSITORY_SPT_SERVER }}/refs/heads/${{ env.NIGHTLY_BRANCH }}/Libraries/SPTarkov.Server.Assets/SPT_Data/configs/core.json
           CLIENT_VERSION=$(jq -r '.compatibleTarkovVersion' core.json)
-
           echo "CLIENT_VERSION=$CLIENT_VERSION" >> $GITHUB_OUTPUT
           echo "SPT_VERSION=$SPT_VERSION" >> $GITHUB_OUTPUT
           echo "SPT_COMMIT_ID=$SPT_COMMIT_ID" >> $GITHUB_OUTPUT
@@ -95,16 +85,12 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.PROCEED == 'true'
     runs-on: ubuntu-latest
-    # 如果你不想用 refringe 的镜像，可以用标准的 mcr.microsoft.com/dotnet/sdk:9.0
-    # 但为了稳妥保留原作者的编译环境设置
     container:
       image: refringe/spt-build-dotnet:2.0.2
     outputs:
       SPT_COMMIT_TIME: ${{ steps.debug-info.outputs.SPT_COMMIT_TIME }}
       WIN_ARTIFACT: ${{ steps.filename.outputs.WIN_ARTIFACT }}
       WIN_RELEASE_FILE: ${{ steps.filename.outputs.WIN_RELEASE }}
-      LINUX_ARTIFACT: ${{ steps.filename.outputs.LINUX_ARTIFACT }}
-      LINUX_RELEASE_FILE: ${{ steps.filename.outputs.LINUX_RELEASE }}
 
     steps:
       - name: Checkout
@@ -124,23 +110,16 @@ jobs:
           echo "SPT_COMMIT_TIME"=$(git log --pretty=format:"%ai" ${{ env.NIGHTLY_BRANCH }} -1) >> $GITHUB_OUTPUT
         shell: bash
 
-      # 如果你没有 custom/bg.png，这一步可能会报错。如果你不需要换背景图，可以把这步删掉
-      # - name: Replace Background Image
-      #   id: bg
-      #   run: |
-      #     cp custom/bg.png /snapshot/Libraries/SPTarkov.Server.Assets/SPT_Data/images/launcher/
-      #   shell: bash
-
       - name: Replace projectName For Windows
         run: |
           cd /snapshot/Libraries/SPTarkov.Server.Assets/SPT_Data/configs
           git checkout core.json
-          # 改个名字，方便你知道这是你自己编译的版本
-          sed -i "s/\"projectName\": \"SPT\",/\"projectName\": \"My Clean SPT (Win)\",/g" core.json
+          sed -i "s/\"projectName\": \"SPT\",/\"projectName\": \"SPT (Clean)\",/g" core.json
         shell: bash
 
       - name: Publish Windows Server
         run: |
+          # 关键参数：-c 使用宽松的配置，-p:SptBuildType 注入 Release 身份
           dotnet publish ./SPTarkov.Server/SPTarkov.Server.csproj \
             -c ${{ needs.prepare.outputs.BUILD_CONFIG }} \
             -f net9.0 \
@@ -164,27 +143,24 @@ jobs:
           win_release_name=${win_artifact_name}.zip
           echo "WIN_ARTIFACT=$win_artifact_name" >> $GITHUB_OUTPUT
           echo "WIN_RELEASE=$win_release_name" >> $GITHUB_OUTPUT
-          # Linux 的名字也顺便生成一下，虽然你可能不用
-          echo "LINUX_ARTIFACT=spt-server-linux-clean" >> $GITHUB_OUTPUT
-          echo "LINUX_RELEASE=spt-server-linux-clean.zip" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Artifact Windows Server
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.filename.outputs.WIN_ARTIFACT }}
+          # 路径会自动匹配上面的 BUILD_CONFIG，不用担心找不到文件
           path: |
             /snapshot/SPTarkov.Server/bin/${{ needs.prepare.outputs.BUILD_CONFIG }}/net9.0/win-x64/publish/
             !/snapshot/SPTarkov.Server/bin/${{ needs.prepare.outputs.BUILD_CONFIG }}/net9.0/win-x64/publish/**/*.pdb
           overwrite: true
 
   assemble-and-publish:
-    # 这一步现在只依赖 build-server-host，去掉了 docker 和 update-trigger
     needs: [prepare, build-server-host]
     if: needs.prepare.outputs.PROCEED == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 需要写权限来发布 Release
+      contents: write
 
     steps:
       - name: Download Windows Artifact
@@ -198,7 +174,6 @@ jobs:
         run: |
           cd windows
           zip -r ../${{ needs.build-server-host.outputs.WIN_RELEASE_FILE }} *
-          ls -R ..
         shell: bash
 
       - name: Create Github Release
@@ -208,15 +183,7 @@ jobs:
           tag_name: "clean-${{ needs.prepare.outputs.BUILD_DATE_TIME }}-${{ github.run_number }}"
           prerelease: true
           body: |
-            ## 纯净版构建 (无水印)
-            
-            **SPT Version**: ${{ needs.prepare.outputs.SPT_VERSION }}
-            **Tarkov Version**: ${{ needs.prepare.outputs.CLIENT_VERSION }}
-            **Commit**: ${{ needs.prepare.outputs.SPT_COMMIT_ID }}
-            
-            > [!TIP]
-            > 这个版本移除了 Nightly 版的浮动水印和红色警告。
-            > 只有 Windows 版本。下载后请解压覆盖到游戏目录。
-            
+            ## 纯净版构建
+            基于 Nightly 代码，但伪装成 Release 以去除水印。
           files: |
             ${{ needs.build-server-host.outputs.WIN_RELEASE_FILE }}
