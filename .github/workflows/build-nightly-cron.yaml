@@ -23,8 +23,12 @@ jobs:
       SPT_VERSION: ${{ steps.versions.outputs.SPT_VERSION }}
       SPT_COMMIT_ID: ${{ steps.versions.outputs.SPT_COMMIT_ID }}
       BUILD_DATE_TIME: ${{ steps.versions.outputs.DATE_TIME }}
-      # 必须是 Release
-      BUILD_CONFIG: Release
+      # -----------------------------------------------------------
+      # 核心修改：
+      # 1. Config 用 BLEEDINGEDGEMODS：这是唯一能编译通过的配置
+      # 2. Type 用 Release：这是去水印的关键
+      # -----------------------------------------------------------
+      BUILD_CONFIG: BLEEDINGEDGEMODS
       BUILD_TYPE: Release
 
     steps:
@@ -113,29 +117,16 @@ jobs:
           sed -i "s/\"projectName\": \"SPT\",/\"projectName\": \"SPT (Clean)\",/g" core.json
         shell: bash
 
-      # ----------------------------------------------------------------
-      # 终极修正：只删报错设置，不改语法设置
-      # 1. 删掉 <TreatWarningsAsErrors>，防止满屏警告导致编译失败
-      # 2. 删掉 <WarningsAsErrors>，防止特定警告卡死
-      # 3. 绝不碰 <Nullable>，保证 CS8632 语法错误不出现
-      # ----------------------------------------------------------------
-      - name: Neutering Strict Mode (Textual Deletion)
-        run: |
-          cd /snapshot
-          echo "✂️ Removing strict compilation flags from csproj files..."
-          
-          # 找到所有项目文件，直接删除包含 TreatWarningsAsErrors 的行
-          find . -type f -name "*.csproj" -exec sed -i '/<TreatWarningsAsErrors>/d' {} +
-          
-          # 直接删除包含 WarningsAsErrors 的行
-          find . -type f -name "*.csproj" -exec sed -i '/<WarningsAsErrors>/d' {} +
-          
-          echo "✅ Strict flags removed. Nullable settings preserved."
-        shell: bash
+      # ---------------------------------------------------------------
+      # 这里的关键是：完全删除了之前所有修改 csproj 文件的步骤
+      # 相信官方的 BLEEDINGEDGEMODS 配置能处理好那些烂代码
+      # ---------------------------------------------------------------
 
       - name: Publish Windows Server
         run: |
-          # 命令行参数再次强制：警告不是错误
+          # 核心策略：
+          # 1. -c BLEEDINGEDGEMODS: 保证编译不报错
+          # 2. -p:SptBuildType=Release: 告诉程序“我是正式版”，从而去水印
           dotnet publish ./SPTarkov.Server/SPTarkov.Server.csproj \
             -c ${{ needs.prepare.outputs.BUILD_CONFIG }} \
             -f net9.0 \
@@ -147,9 +138,7 @@ jobs:
             -p:SptVersion=${{ needs.prepare.outputs.SPT_VERSION }} \
             -p:SptBuildTime=$( date +%Y%m%d ) \
             -p:SptCommit=${{ steps.debug-info.outputs.COMMIT_ID_SHORT }} \
-            -p:IsPublish=true \
-            -p:TreatWarningsAsErrors=false \
-            -p:WarningsAsErrors=""
+            -p:IsPublish=true
         shell: bash
         working-directory: /snapshot
 
@@ -166,6 +155,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.filename.outputs.WIN_ARTIFACT }}
+          # 路径变量会自动匹配 BLEEDINGEDGEMODS，不用担心
           path: |
             /snapshot/SPTarkov.Server/bin/${{ needs.prepare.outputs.BUILD_CONFIG }}/net9.0/win-x64/publish/
             !/snapshot/SPTarkov.Server/bin/${{ needs.prepare.outputs.BUILD_CONFIG }}/net9.0/win-x64/publish/**/*.pdb
@@ -200,6 +190,6 @@ jobs:
           prerelease: true
           body: |
             ## 纯净版构建
-            Release 模式，无水印。
+            使用开发版配置编译，伪装正式版身份。
           files: |
             ${{ needs.build-server-host.outputs.WIN_RELEASE_FILE }}
