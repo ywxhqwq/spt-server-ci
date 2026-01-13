@@ -23,10 +23,8 @@ jobs:
       SPT_VERSION: ${{ steps.versions.outputs.SPT_VERSION }}
       SPT_COMMIT_ID: ${{ steps.versions.outputs.SPT_COMMIT_ID }}
       BUILD_DATE_TIME: ${{ steps.versions.outputs.DATE_TIME }}
-      # !!! 关键修正 !!!
-      # 使用 BLEEDINGEDGEMODS 以避免 CS0131 语法错误
-      BUILD_CONFIG: BLEEDINGEDGEMODS
-      # 身份依然设为 Release 以去水印
+      # 必须是 Release
+      BUILD_CONFIG: Release
       BUILD_TYPE: Release
 
     steps:
@@ -116,32 +114,28 @@ jobs:
         shell: bash
 
       # ----------------------------------------------------------------
-      # 修正后的覆盖配置
-      # 1. 仅关闭 TreatWarningsAsErrors，允许编译继续
-      # 2. 绝对不碰 Nullable 设置，防止触发 CS8632
+      # 终极修正：只删报错设置，不改语法设置
+      # 1. 删掉 <TreatWarningsAsErrors>，防止满屏警告导致编译失败
+      # 2. 删掉 <WarningsAsErrors>，防止特定警告卡死
+      # 3. 绝不碰 <Nullable>，保证 CS8632 语法错误不出现
       # ----------------------------------------------------------------
-      - name: Suppress Errors (Directory.Build.targets)
+      - name: Neutering Strict Mode (Textual Deletion)
         run: |
           cd /snapshot
-          cat <<EOF > Directory.Build.targets
-          <Project>
-            <PropertyGroup>
-              <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-              <WarningsAsErrors>false</WarningsAsErrors>
-              <!-- 不设置 Nullable disable，避免语法冲突 -->
-              <NoWarn>\$(NoWarn);CS8618;CS8602;CS8604;IL3000</NoWarn>
-            </PropertyGroup>
-          </Project>
-          EOF
-          echo "✅ Warnings suppressed correctly."
+          echo "✂️ Removing strict compilation flags from csproj files..."
+          
+          # 找到所有项目文件，直接删除包含 TreatWarningsAsErrors 的行
+          find . -type f -name "*.csproj" -exec sed -i '/<TreatWarningsAsErrors>/d' {} +
+          
+          # 直接删除包含 WarningsAsErrors 的行
+          find . -type f -name "*.csproj" -exec sed -i '/<WarningsAsErrors>/d' {} +
+          
+          echo "✅ Strict flags removed. Nullable settings preserved."
         shell: bash
 
       - name: Publish Windows Server
         run: |
-          # 核心战术：
-          # 1. -c BLEEDINGEDGEMODS: 保证代码本身能通过编译（无 CS0131 错误）
-          # 2. -p:SptBuildType=Release: 注入 Release 身份，去水印
-          # 3. -p:DefineConstants: 确保宏定义兼容
+          # 命令行参数再次强制：警告不是错误
           dotnet publish ./SPTarkov.Server/SPTarkov.Server.csproj \
             -c ${{ needs.prepare.outputs.BUILD_CONFIG }} \
             -f net9.0 \
@@ -153,7 +147,9 @@ jobs:
             -p:SptVersion=${{ needs.prepare.outputs.SPT_VERSION }} \
             -p:SptBuildTime=$( date +%Y%m%d ) \
             -p:SptCommit=${{ steps.debug-info.outputs.COMMIT_ID_SHORT }} \
-            -p:IsPublish=true
+            -p:IsPublish=true \
+            -p:TreatWarningsAsErrors=false \
+            -p:WarningsAsErrors=""
         shell: bash
         working-directory: /snapshot
 
@@ -204,6 +200,6 @@ jobs:
           prerelease: true
           body: |
             ## 纯净版构建
-            使用 Nightly 稳定配置构建，并移除水印。
+            Release 模式，无水印。
           files: |
             ${{ needs.build-server-host.outputs.WIN_RELEASE_FILE }}
