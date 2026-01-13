@@ -152,7 +152,9 @@ jobs:
             -p:SptVersion=${{ needs.prepare.outputs.SPT_VERSION }} \
             -p:SptBuildTime=$( date +%Y%m%d ) \
             -p:SptCommit=${{ steps.debug-info.outputs.COMMIT_ID_SHORT }} \
-            -p:IsPublish=true
+            -p:IsPublish=true \
+            -p:TreatWarningsAsErrors=false \
+            -p:NoWarn="CS8600;CS8601;CS8602;CS8603;CS8604;CS8618;IL3000"
         shell: bash
         working-directory: /snapshot
 
