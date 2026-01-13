@@ -25,7 +25,7 @@ jobs:
       SPT_COMMIT_ID: ${{ steps.versions.outputs.SPT_COMMIT_ID }}
       FIKA_SERVER_COMMIT: ${{ steps.compare-fika.outputs.FIKA_SERVER_COMMIT }}
       BUILD_DATE_TIME: ${{ steps.versions.outputs.DATE_TIME }}
-      BUILD_TYPE: BLEEDINGEDGEMODS # BLEEDINGEDGE BLEEDINGEDGEMODS Release
+      BUILD_TYPE: Release # BLEEDINGEDGE BLEEDINGEDGEMODS Release
       BUILD_CONFIG: Release # Debug Release
 
     steps:
