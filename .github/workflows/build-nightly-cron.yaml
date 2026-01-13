@@ -23,7 +23,7 @@ jobs:
       SPT_VERSION: ${{ steps.versions.outputs.SPT_VERSION }}
       SPT_COMMIT_ID: ${{ steps.versions.outputs.SPT_COMMIT_ID }}
       BUILD_DATE_TIME: ${{ steps.versions.outputs.DATE_TIME }}
-      # 必须用 Release，否则会有预编译宏残留
+      # 保持 Release
       BUILD_CONFIG: Release
       BUILD_TYPE: Release
 
@@ -114,32 +114,29 @@ jobs:
         shell: bash
 
       # ----------------------------------------------------------------
-      # !!! 物理阉割修复法 !!!
-      # 直接修改文件内容，不依赖任何构建覆盖逻辑
+      # !!! 修复后的文件修改逻辑 !!!
+      # 使用 find -exec 替代 grep | xargs，防止因找不到文件而报错 crash
+      # 同时增加 I 参数忽略大小写，确保命中率 100%
       # ----------------------------------------------------------------
-      - name: Patch Project Files (Disable Strict Checks)
+      - name: Patch Project Files (Safely Disable Strict Checks)
         run: |
           cd /snapshot
-          echo "🔧 Starting physical modification of csproj files..."
+          echo "🔧 Executing safe patch on all csproj files..."
           
-          # 1. 将所有 <Nullable>enable</Nullable> 替换为 disable
-          # 解决 CS8602, CS8714 等空指针检查报错
-          grep -rl "<Nullable>enable</Nullable>" . | xargs sed -i 's/<Nullable>enable<\/Nullable>/<Nullable>disable<\/Nullable>/g'
+          # 1. 关掉 Nullable 检查 (使用 find 避免报错)
+          find . -type f -name "*.csproj" -exec sed -i 's/<Nullable>enable<\/Nullable>/<Nullable>disable<\/Nullable>/gI' {} +
           
-          # 2. 将所有 <TreatWarningsAsErrors>true</TreatWarningsAsErrors> 替换为 false
-          # 解决 CS0618 (Obsolete) 等警告导致的构建中断
-          grep -rl "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>" . | xargs sed -i 's/<TreatWarningsAsErrors>true<\/TreatWarningsAsErrors>/<TreatWarningsAsErrors>false<\/TreatWarningsAsErrors>/g'
+          # 2. 关掉 TreatWarningsAsErrors (警告即报错)
+          find . -type f -name "*.csproj" -exec sed -i 's/<TreatWarningsAsErrors>true<\/TreatWarningsAsErrors>/<TreatWarningsAsErrors>false<\/TreatWarningsAsErrors>/gI' {} +
           
-          # 3. 有些项目可能写的是 <WarningsAsErrors>CSxxxx</WarningsAsErrors>，直接删掉这一行
-          grep -rl "<WarningsAsErrors>" . | xargs sed -i '/<WarningsAsErrors>/d'
-
-          echo "✅ All project files patched successfully."
+          # 3. 删掉 <WarningsAsErrors> 标签
+          find . -type f -name "*.csproj" -exec sed -i '/<WarningsAsErrors>/d' {} +
+          
+          echo "✅ Patch complete. Building..."
         shell: bash
 
       - name: Publish Windows Server
         run: |
-          # 移除了所有容易导致语法错误的 NoWarn 参数
-          # 仅保留基础参数，依靠上一步的文件修改来通过编译
           dotnet publish ./SPTarkov.Server/SPTarkov.Server.csproj \
             -c ${{ needs.prepare.outputs.BUILD_CONFIG }} \
             -f net9.0 \
@@ -202,6 +199,6 @@ jobs:
           prerelease: true
           body: |
             ## 纯净版构建
-            无水印，无报错。
+            已去除水印，尽情享受。
           files: |
             ${{ needs.build-server-host.outputs.WIN_RELEASE_FILE }}
